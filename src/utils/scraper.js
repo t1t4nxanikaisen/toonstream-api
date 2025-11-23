@@ -1,20 +1,32 @@
+import axios from 'axios';
+import { wrapper } from 'axios-cookiejar-support';
+import { CookieJar } from 'tough-cookie';
 import * as cheerio from 'cheerio';
 import config from '../../config.js';
 
+// Create axios instance with cookie jar support
+const jar = new CookieJar();
+const client = wrapper(axios.create({
+    jar,
+    timeout: 30000,
+    maxRedirects: 5,
+    validateStatus: (status) => status < 500,
+}));
+
 /**
- * Fetch HTML content from a URL using native Fetch API
+ * Fetch a page with Cloudflare bypass
  * @param {string} url - URL to fetch
- * @param {object} options - Fetch options
+ * @param {object} options - Additional options
  * @returns {Promise<string>} HTML content
  */
 export const fetchPage = async (url, options = {}) => {
     try {
         const fullUrl = url.startsWith('http') ? url : `${config.baseUrl}${url}`;
 
-        const response = await fetch(fullUrl, {
+        const response = await client.get(fullUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
@@ -23,6 +35,9 @@ export const fetchPage = async (url, options = {}) => {
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
+                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
                 'Cache-Control': 'max-age=0',
                 'Referer': 'https://www.google.com/',
                 ...options.headers
@@ -30,11 +45,16 @@ export const fetchPage = async (url, options = {}) => {
             ...options
         });
 
-        if (!response.ok) {
+        if (response.status === 403) {
+            console.error(`403 Forbidden for ${fullUrl}`);
+            throw new Error(`Access denied (403). The website may be blocking automated requests.`);
+        }
+
+        if (response.status >= 400) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        return await response.text();
+        return response.data;
     } catch (error) {
         console.error(`Error fetching page ${url}:`, error.message);
         throw new Error(`Failed to fetch page: ${error.message}`);
@@ -42,7 +62,7 @@ export const fetchPage = async (url, options = {}) => {
 };
 
 /**
- * Parse HTML content with Cheerio
+ * Parse HTML content
  * @param {string} html - HTML content
  * @returns {CheerioAPI} Cheerio instance
  */
@@ -53,9 +73,9 @@ export const parseHTML = (html) => {
 /**
  * Normalize image URL
  * @param {string} url - Image URL
- * @returns {string} Normalized URL
+ * @returns {string|null} Normalized URL
  */
-const normalizeImageUrl = (url) => {
+export const normalizeImageUrl = (url) => {
     if (!url) return null;
     if (url.startsWith('http')) return url;
     if (url.startsWith('//')) return `https:${url}`;
@@ -64,26 +84,56 @@ const normalizeImageUrl = (url) => {
 };
 
 /**
- * Extract anime/series card information
+ * Normalize anime URL
+ * @param {string} url - Anime URL
+ * @returns {string|null} Normalized URL
+ */
+export const normalizeUrl = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/')) return `${config.baseUrl}${url}`;
+    return `${config.baseUrl}/${url}`;
+};
+
+/**
+ * Extract anime ID from URL
+ * @param {string} url - Anime URL
+ * @returns {string|null} Anime ID
+ */
+export const extractAnimeId = (url) => {
+    if (!url) return null;
+
+    // Extract from URLs like /series/anime-name/ or /movies/movie-name/
+    const match = url.match(/\/(series|movies?)\/([^\/]+)/);
+    return match ? match[2] : null;
+};
+
+/**
+ * Extract anime card data from element
  * @param {Cheerio} $element - Cheerio element
  * @param {CheerioAPI} $ - Cheerio instance
- * @returns {object} Anime card data
+ * @returns {object|null} Anime data
  */
 export const extractAnimeCard = ($element, $) => {
     try {
         // Find the main link
-        const link = $element.is('a') ? $element : $element.find('a').first();
-        const url = link.attr('href') || '';
+        const link = $element.find('a[href*="/series/"], a[href*="/movies/"], a[href*="/movie/"]').first();
+        if (!link.length) return null;
 
-        // Skip if it's a category or non-content link
-        if (!url ||
-            url.includes('/category/') ||
+        let url = link.attr('href');
+        if (!url) return null;
+
+        // Filter out non-content links
+        if (url.includes('/category/') ||
             url.includes('/tag/') ||
             url.includes('/cast_tv/') ||
-            url === '#' ||
-            (!url.includes('/series/') && !url.includes('/movies/') && !url.includes('/movie/'))) {
+            url.includes('/genre/')) {
             return null;
         }
+
+        url = normalizeUrl(url);
+        const id = extractAnimeId(url);
+        if (!id) return null;
 
         // Extract poster image - try multiple selectors
         let poster = null;
@@ -107,17 +157,6 @@ export const extractAnimeCard = ($element, $) => {
             }
         }
 
-        // Also check if element itself is an image container
-        if (!poster) {
-            const directImg = $element.find('img').first();
-            if (directImg.length) {
-                poster = directImg.attr('data-src') ||
-                    directImg.attr('data-lazy-src') ||
-                    directImg.attr('src') ||
-                    directImg.attr('data-original');
-            }
-        }
-
         poster = normalizeImageUrl(poster);
 
         // Extract title from various possible locations
@@ -135,29 +174,16 @@ export const extractAnimeCard = ($element, $) => {
             .replace(/\s+/g, ' ')
             .trim();
 
-        // Extract ID from URL
-        const urlParts = url.split('/').filter(Boolean);
-        const id = urlParts[urlParts.length - 1] || '';
-
-        // Extract rating if available
-        const ratingEl = $element.find('.rating, .imdb, .tmdb, [class*="rating"], .ribon');
-        const ratingText = ratingEl.text().trim();
-        const rating = ratingText.match(/[\d.]+/)?.[0] || null;
-
-        // Only return if we have at least an ID and URL
-        if (!id || !url) {
-            return null;
-        }
+        if (!title) return null;
 
         return {
             id,
-            title: title || id.replace(/-/g, ' '),
-            url: url.startsWith('http') ? url : `${config.baseUrl}${url}`,
-            poster,
-            rating: rating ? parseFloat(rating) : null
+            title,
+            url,
+            poster
         };
     } catch (error) {
-        console.error('Error extracting anime card:', error.message);
+        console.error('Error extracting anime card:', error);
         return null;
     }
 };
@@ -166,40 +192,22 @@ export const extractAnimeCard = ($element, $) => {
  * Extract episode information from element
  * @param {Cheerio} $element - Cheerio element
  * @param {CheerioAPI} $ - Cheerio instance
- * @returns {object} Episode data
+ * @returns {object|null} Episode data
  */
 export const extractEpisodeInfo = ($element, $) => {
     try {
-        const link = $element.is('a') ? $element : $element.find('a').first();
-        const url = link.attr('href') || '';
+        const link = $element.find('a').first();
+        const url = normalizeUrl(link.attr('href'));
         const title = link.text().trim() || link.attr('title') || '';
-
-        // Extract episode ID from URL
-        const urlParts = url.split('/').filter(Boolean);
-        const id = urlParts[urlParts.length - 1] || '';
-
-        // Extract season and episode numbers (e.g., "1x17" or "Hunter x Hunter 1x17")
-        const episodeMatch = (title + ' ' + id).match(/(\d+)x(\d+)/);
-        const season = episodeMatch ? parseInt(episodeMatch[1]) : null;
-        const episode = episodeMatch ? parseInt(episodeMatch[2]) : null;
-
-        // Extract release date if available
-        const dateText = $element.find('.date, time, .release-date').text().trim();
-
-        if (!id || !url) {
-            return null;
-        }
+        const id = extractAnimeId(url);
 
         return {
             id,
-            title: title || id.replace(/-/g, ' '),
-            url: url.startsWith('http') ? url : `${config.baseUrl}${url}`,
-            season,
-            episode,
-            releaseDate: dateText || null
+            title,
+            url
         };
     } catch (error) {
-        console.error('Error extracting episode info:', error.message);
+        console.error('Error extracting episode info:', error);
         return null;
     }
 };
@@ -211,30 +219,36 @@ export const extractEpisodeInfo = ($element, $) => {
  */
 export const extractPagination = ($) => {
     try {
-        const pagination = $('.pagination, .nav-links, [class*="pagination"]');
-        const currentPageEl = pagination.find('.current, .active, [aria-current="page"]');
-        const currentPage = parseInt(currentPageEl.text()) || 1;
-
-        const pageLinks = pagination.find('a');
-        let totalPages = currentPage;
-
-        pageLinks.each((_, el) => {
-            const pageNum = parseInt($(el).text());
-            if (pageNum && pageNum > totalPages) {
-                totalPages = pageNum;
-            }
-        });
-
-        const hasNextPage = pagination.find('.next, [rel="next"]').length > 0;
-        const hasPrevPage = pagination.find('.prev, [rel="prev"]').length > 0;
-
-        return {
-            currentPage,
-            totalPages,
-            hasNextPage,
-            hasPrevPage
+        const pagination = {
+            currentPage: 1,
+            totalPages: 1,
+            hasNextPage: false,
+            hasPrevPage: false
         };
+
+        // Try to find pagination elements
+        const currentPageEl = $('.current, .page-numbers.current, .pagination .active');
+        if (currentPageEl.length) {
+            pagination.currentPage = parseInt(currentPageEl.text().trim()) || 1;
+        }
+
+        // Find all page numbers
+        const pageNumbers = $('.page-numbers, .pagination a').map((_, el) => {
+            const num = parseInt($(el).text().trim());
+            return isNaN(num) ? 0 : num;
+        }).get();
+
+        if (pageNumbers.length > 0) {
+            pagination.totalPages = Math.max(...pageNumbers, pagination.currentPage);
+        }
+
+        // Check for next/prev links
+        pagination.hasNextPage = $('.next, .page-numbers.next, .pagination .next').length > 0;
+        pagination.hasPrevPage = $('.prev, .page-numbers.prev, .pagination .prev').length > 0;
+
+        return pagination;
     } catch (error) {
+        console.error('Error extracting pagination:', error);
         return {
             currentPage: 1,
             totalPages: 1,
@@ -245,34 +259,22 @@ export const extractPagination = ($) => {
 };
 
 /**
- * Clean and normalize text
+ * Clean text by removing extra whitespace
  * @param {string} text - Text to clean
  * @returns {string} Cleaned text
  */
 export const cleanText = (text) => {
     if (!text) return '';
-    return text
-        .replace(/\s+/g, ' ')
-        .replace(/\n+/g, ' ')
-        .trim();
+    return text.replace(/\s+/g, ' ').trim();
 };
 
 /**
  * Extract slug from URL
- * @param {string} url - URL to extract slug from
- * @returns {string} Slug
+ * @param {string} url - URL
+ * @returns {string|null} Slug
  */
 export const extractSlug = (url) => {
-    const parts = url.split('/').filter(Boolean);
-    return parts[parts.length - 1] || '';
-};
-
-export default {
-    fetchPage,
-    parseHTML,
-    extractAnimeCard,
-    extractEpisodeInfo,
-    extractPagination,
-    cleanText,
-    extractSlug
+    if (!url) return null;
+    const match = url.match(/\/([^\/]+)\/?$/);
+    return match ? match[1] : null;
 };
