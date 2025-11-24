@@ -15,8 +15,28 @@ export const scrapeAnimeDetails = async (id) => {
     }
 
     try {
-        const url = `/series/${id}/`;
-        const html = await fetchPage(url);
+        // Try multiple URL patterns to handle both series and movies
+        let html;
+        let url;
+        let lastError;
+
+        // First try as a series
+        try {
+            url = `/series/${id}/`;
+            html = await fetchPage(url);
+        } catch (error) {
+            lastError = error;
+            // If series fails with 404, try as a movie
+            if (error.message.includes('404')) {
+                url = `/movies/${id}/`;
+                html = await fetchPage(url);
+                lastError = null; // Success!
+            } else {
+                // If it's not a 404, throw the original error
+                throw error;
+            }
+        }
+
         const $ = parseHTML(html);
 
         // Extract basic info

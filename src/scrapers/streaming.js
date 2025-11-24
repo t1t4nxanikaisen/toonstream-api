@@ -15,8 +15,46 @@ export const scrapeEpisodeStreaming = async (episodeId) => {
     }
 
     try {
-        const url = `/episode/${episodeId}/`;
-        const html = await fetchPage(url);
+        // Try multiple URL patterns to handle both series and movies
+        let html;
+        let url;
+        let lastError;
+
+        // First try as a series episode
+        try {
+            url = `/series/${episodeId}/`;
+            html = await fetchPage(url);
+        } catch (error) {
+            lastError = error;
+            // If series fails with 404, try as a movie
+            if (error.message.includes('404')) {
+                try {
+                    url = `/movies/${episodeId}/`;
+                    html = await fetchPage(url);
+                    lastError = null; // Success!
+                } catch (movieError) {
+                    lastError = movieError;
+                    // Finally try the episode URL format
+                    if (movieError.message.includes('404')) {
+                        url = `/episode/${episodeId}/`;
+                        html = await fetchPage(url);
+                        lastError = null; // Success!
+                    } else {
+                        // If movie error is not 404, rethrow it
+                        throw movieError;
+                    }
+                }
+            } else {
+                // If it's not a 404, throw the original error
+                throw error;
+            }
+        }
+
+        // If html is still not set and lastError exists, it means all attempts failed
+        if (!html && lastError) {
+            throw lastError;
+        }
+
         const $ = parseHTML(html);
 
         // Extract episode info

@@ -20,7 +20,13 @@ const app = new Hono();
 // Middleware
 app.use('*', logger());
 app.use('*', prettyJSON());
-app.use('*', cors());
+app.use('*', cors({
+    origin: '*',
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    exposeHeaders: ['Content-Length', 'X-Request-Id']
+}));
 
 // Rate limiting
 const limiter = rateLimiter({
