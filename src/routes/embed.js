@@ -1,59 +1,23 @@
 import { Hono } from 'hono';
-import { html } from 'hono/html';
-import { scrapeEpisodeStreaming } from '../scrapers/streaming.js';
-import CryptoJS from 'crypto-js';
-import config from '../../config.js';
+import axios from 'axios';
 
 const embed = new Hono();
 
-// Secret key for encryption (should be in config/env in production)
-const SECRET_KEY = config.secretKey || 'toonstream-secret-key';
-
-/**
- * Encrypt data
- * @param {object} data - Data to encrypt
- * @returns {string} Encrypted string
- */
-const encrypt = (data) => {
-    return CryptoJS.AES.encrypt(JSON.stringify(data), SECRET_KEY).toString();
-};
-
 /**
  * GET /api/source/:id
- * Get direct/encoded sources for an episode
+ * Get sources by scraping (kept for compatibility)
  */
 embed.get('/api/source/:id', async (c) => {
     try {
         const id = c.req.param('id');
-        const data = await scrapeEpisodeStreaming(id);
 
-        if (!data || !data.sources || data.sources.length === 0) {
-            return c.json({
-                success: false,
-                error: 'No sources found'
-            }, 404);
-        }
-
-        // Filter and process sources
-        const sources = data.sources.map(source => ({
-            file: source.url,
-            label: source.quality || 'Auto',
-            type: source.type === 'iframe' ? 'iframe' : (source.mimeType || 'video/mp4')
-        }));
-
-        // Encrypt sources for security (optional, based on requirement)
-        const encrypted = encrypt(sources);
-
+        // Return a simple response pointing to embed
         return c.json({
             success: true,
-            sources,
-            encrypted,
-            tracks: [], // Subtitles if available
-            intro: { start: 0, end: 0 }, // Intro skip if available
-            outro: { start: 0, end: 0 }  // Outro skip if available
+            message: 'Use /embed/:id for video playback',
+            embedUrl: `/embed/${id}`
         });
     } catch (error) {
-        console.error('Source route error:', error.message);
         return c.json({
             success: false,
             error: error.message
@@ -63,158 +27,145 @@ embed.get('/api/source/:id', async (c) => {
 
 /**
  * GET /embed/:id
- * Serve HTML embed player
+ * Fetch ToonStream page and show only the player
  */
 embed.get('/embed/:id', async (c) => {
-    const id = c.req.param('id');
+    try {
+        const id = c.req.param('id');
+        const url = `https://toonstream.love/episode/${id}/`;
 
-    return c.html(html`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>ToonStream Player</title>
-            <style>
-                body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
-                #player { width: 100%; height: 100%; }
-                .error { color: #fff; display: flex; justify-content: center; align-items: center; height: 100%; font-family: sans-serif; }
-                
-                /* Ad blocking CSS */
-                iframe[src*="ads"],
-                iframe[src*="doubleclick"],
-                iframe[src*="googlesyndication"],
-                iframe[src*="adservice"],
-                div[class*="ad-"],
-                div[id*="ad-"],
-                .advertisement,
-                .ad-container {
+        console.log(`[Embed] Fetching ToonStream page for ${id}`);
+
+        // Use axios for faster fetching instead of browser
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Referer': 'https://toonstream.love/',
+            },
+            timeout: 10000,
+            maxRedirects: 5
+        });
+
+        let html = response.data;
+
+        // Fix relative URLs to absolute
+        html = html
+            .replace(/src="\/\//g, 'src="https://')
+            .replace(/href="\/\//g, 'href="https://')
+            .replace(/src="\//g, 'src="https://toonstream.love/')
+            .replace(/href="\//g, 'href="https://toonstream.love/');
+
+        // Inject CSS to hide everything except the player
+        const hideNonPlayerCSS = `
+            <style id="embed-custom-styles">
+                /* Hide header, footer, navigation */
+                header, footer, nav,
+                .header, .footer, .navigation, .nav,
+                [class*="header"]:not([class*="player"]),
+                [class*="footer"]:not([class*="player"]),
+                [class*="nav"]:not([class*="player"]),
+                .site-header, .site-footer, .site-nav,
+                .menu, .sidebar, .breadcrumb,
+                [class*="menu"], [class*="sidebar"], [class*="breadcrumb"],
+                /* Hide related content and recommendations */
+                .related, .recommendations, .similar,
+                [class*="related"], [class*="recommend"], [class*="similar"],
+                /* Hide comments and social */
+                .comments, .social, .share,
+                [class*="comment"], [class*="social"], [class*="share"],
+                /* Hide extra content */
+                .content-info, .episode-list, .series-info,
+                [class*="episode-list"], [class*="series"],
+                /* Common WordPress/theme elements */
+                .entry-header, .entry-footer, .entry-meta,
+                .post-navigation, .widget, .widget-area {
                     display: none !important;
                     visibility: hidden !important;
-                    width: 0 !important;
-                    height: 0 !important;
+                }
+                
+                /* Reset body styles */
+                body {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    overflow: hidden !important;
+                    background: #000 !important;
+                }
+                
+                /* Make player container fullscreen */
+                .player, .player-container, .video-player,
+                [class*="player"]:not([class*="header"]):not([class*="footer"]),
+                [id*="player"],
+                .video-container, [class*="video-container"],
+                iframe[src*="player"], iframe[src*="embed"] {
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    z-index: 9999 !important;
+                }
+                
+                /* Ensure player iframe is visible */
+                .player iframe, .player-container iframe,
+                [class*="player"] iframe {
+                    display: block !important;
+                    visibility: visible !important;
                 }
             </style>
-            <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
-        </head>
-        <body>
-            <div id="player"></div>
-            <script>
-                let currentSourceIndex = 0;
-                let sources = [];
+        `;
 
-                async function initPlayer() {
-                    try {
-                        const response = await fetch('/api/source/${id}');
-                        const data = await response.json();
+        // Insert the CSS before </head>
+        html = html.replace('</head>', `${hideNonPlayerCSS}</head>`);
 
-                        if (!data.success) {
-                            document.getElementById('player').innerHTML = '<div class="error">' + (data.error || 'Error loading video') + '</div>';
-                            return;
-                        }
-
-                        // Strictly ignore the 1st server as requested
-                        if (data.sources.length > 0) {
-                            sources = data.sources.slice(1);
-                        } else {
-                            sources = [];
-                        }
-
-                        if (sources.length === 0) {
-                             document.getElementById('player').innerHTML = '<div class="error">No working sources found</div>';
-                             return;
-                        }
-
-                        loadSource(0);
-                    } catch (error) {
-                        console.error(error);
-                        document.getElementById('player').innerHTML = '<div class="error">Failed to load player</div>';
+        return c.html(html);
+    } catch (error) {
+        console.error('Embed error:', error.message);
+        return c.html(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+                <style>
+                    body { 
+                        margin: 0; 
+                        padding: 0; 
+                        background: #000; 
+                        color: #fff; 
+                        font-family: Arial, sans-serif;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100vh;
                     }
-                }
-
-                function loadSource(index) {
-                    if (index >= sources.length) {
-                        document.getElementById('player').innerHTML = '<div class="error">All sources failed to load</div>';
-                        return;
+                    .error {
+                        text-align: center;
+                        padding: 20px;
                     }
-
-                    currentSourceIndex = index;
-                    const source = sources[index];
-                    
-                    if (source.type === 'iframe') {
-                        const iframe = document.createElement('iframe');
-                        iframe.src = source.file;
-                        iframe.frameBorder = '0';
-                        iframe.allowFullscreen = true;
-                        iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-                        iframe.sandbox = 'allow-same-origin allow-scripts allow-forms allow-popups allow-presentation';
-                        iframe.style.width = '100%';
-                        iframe.style.height = '100%';
-                        
-                        // Auto-switch to next source after 5 seconds if iframe doesn't load properly
-                        const timeout = setTimeout(() => {
-                            console.log('Source ' + (index + 1) + ' timeout, trying next...');
-                            loadSource(index + 1);
-                        }, 5000);
-
-                        // Listen for iframe load
-                        iframe.onload = () => {
-                            clearTimeout(timeout);
-                            console.log('Source ' + (index + 1) + ' loaded successfully');
-                        };
-
-                        iframe.onerror = () => {
-                            clearTimeout(timeout);
-                            console.log('Source ' + (index + 1) + ' failed, trying next...');
-                            loadSource(index + 1);
-                        };
-
-                        document.getElementById('player').innerHTML = '';
-                        document.getElementById('player').appendChild(iframe);
-                    } else {
-                        // For direct video sources
-                        const videoSources = sources.filter(s => s.type !== 'iframe');
-                        const art = new Artplayer({
-                            container: '#player',
-                            url: source.file,
-                            quality: videoSources,
-                            volume: 0.5,
-                            isLive: false,
-                            muted: false,
-                            autoplay: false,
-                            pip: true,
-                            autoSize: true,
-                            autoMini: true,
-                            screenshot: true,
-                            setting: true,
-                            loop: false,
-                            flip: true,
-                            playbackRate: true,
-                            aspectRatio: true,
-                            fullscreen: true,
-                            fullscreenWeb: true,
-                            subtitleOffset: true,
-                            miniProgressBar: true,
-                            mutex: true,
-                            backdrop: true,
-                            playsInline: true,
-                            autoPlayback: true,
-                            airplay: true,
-                            theme: '#ff0057',
-                        });
-
-                        art.on('error', () => {
-                            console.log('Video source ' + (index + 1) + ' failed, trying next...');
-                            loadSource(index + 1);
-                        });
+                    a {
+                        color: #4a9eff;
+                        text-decoration: none;
                     }
-                }
-
-                initPlayer();
-            </script>
-        </body>
-        </html>
-    `);
+                    a:hover {
+                        text-decoration: underline;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h1>Error Loading Video</h1>
+                    <p>${error.message}</p>
+                    <p><small>Try visiting: <a href="https://toonstream.love/episode/${c.req.param('id')}/" target="_blank">ToonStream directly</a></small></p>
+                </div>
+            </body>
+            </html>
+        `);
+    }
 });
 
 export default embed;

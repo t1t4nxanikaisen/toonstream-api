@@ -10,7 +10,7 @@
 
 **A comprehensive RESTful API for scraping anime content from toonstream.love**
 
-[Features](#features) • [Installation](#installation) • [API Endpoints](#api-endpoints) • [Documentation](#documentation) • [Deployment](#deployment)
+[Features](#features) • [Installation](#installation) • [API Endpoints](#api-endpoints) • [Documentation](#documentation) • [Deployment](#deployment) • [📖 Full API Docs](./API-DOCUMENTATION.md)
 
 </div>
 
@@ -239,6 +239,18 @@ bun run start
 ---
 
 ## Documentation
+
+### 📖 Comprehensive API Documentation
+
+**[View Full API Documentation →](./API-DOCUMENTATION.md)**
+
+Complete documentation including:
+- All API endpoints with examples
+- Request/response formats
+- Codebase architecture
+- Security features
+- Performance metrics
+- Testing results
 
 ### Interactive API Docs
 
