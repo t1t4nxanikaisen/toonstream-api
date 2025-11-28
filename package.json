@@ -2,15 +2,15 @@
   "name": "toonstream-api",
   "version": "1.0.0",
   "description": "A comprehensive RESTful API for scraping anime content from toonstream.love - Optimized for Vercel Serverless",
-  "module": "index.js",
+  "module": "api/index.js",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=18.x"
   },
   "scripts": {
-    "dev": "bun --watch index.js",
-    "start": "bun index.js",
+    "dev": "bun --watch api/index.js",
+    "start": "bun api/index.js",
     "lint": "eslint",
     "lint:fix": "eslint --fix && prettier . --write",
     "vercel-build": "echo 'Building for Vercel...'"

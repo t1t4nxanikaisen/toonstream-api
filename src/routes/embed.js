@@ -36,17 +36,60 @@ embed.get('/embed/:id', async (c) => {
 
         console.log(`[Embed] Fetching ToonStream page for ${id}`);
 
-        // Use axios for faster fetching instead of browser
-        const response = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Referer': 'https://toonstream.love/',
-            },
-            timeout: 10000,
-            maxRedirects: 5
-        });
+        // Enhanced headers to bypass restrictions
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://toonstream.love/',
+            'Origin': 'https://toonstream.love',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Cache-Control': 'max-age=0'
+        };
+
+        // Retry logic for handling transient errors
+        let response;
+        let lastError;
+        const maxRetries = 3;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                response = await axios.get(url, {
+                    headers,
+                    timeout: 15000,
+                    maxRedirects: 5,
+                    validateStatus: (status) => status < 500 // Accept 4xx as valid to handle them
+                });
+
+                // If we got a 403, try with different user agent
+                if (response.status === 403 && attempt < maxRetries) {
+                    console.log(`[Embed] Got 403, retrying with different headers (attempt ${attempt}/${maxRetries})`);
+                    headers['User-Agent'] = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${120 + attempt}.0.0.0 Safari/537.36`;
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+                    continue;
+                }
+
+                if (response.status >= 400) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                break; // Success
+            } catch (error) {
+                lastError = error;
+                if (attempt < maxRetries) {
+                    console.log(`[Embed] Request failed (attempt ${attempt}/${maxRetries}):`, error.message);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                } else {
+                    throw error;
+                }
+            }
+        }
 
         let html = response.data;
 
