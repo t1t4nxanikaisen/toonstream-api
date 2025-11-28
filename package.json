@@ -1,7 +1,7 @@
 {
   "name": "toonstream-api",
   "version": "1.0.0",
-  "description": "A comprehensive RESTful API for scraping anime content from toonstream.love",
+  "description": "A comprehensive RESTful API for scraping anime content from toonstream.love - Optimized for Vercel Serverless",
   "module": "index.js",
   "type": "module",
   "private": true,
@@ -12,20 +12,22 @@
     "dev": "bun --watch index.js",
     "start": "bun index.js",
     "lint": "eslint",
-    "lint:fix": "eslint --fix && prettier . --write"
+    "lint:fix": "eslint --fix && prettier . --write",
+    "vercel-build": "echo 'Building for Vercel...'"
   },
   "keywords": [
     "anime",
     "toonstream",
     "scraper",
     "api",
-    "rest"
+    "rest",
+    "vercel",
+    "serverless"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@hono/swagger-ui": "^0.5.2",
-    "@sparticuz/chromium": "^141.0.0",
     "axios": "^1.13.2",
     "axios-cookiejar-support": "^6.0.5",
     "cheerio": "^1.0.0",
@@ -35,12 +37,11 @@
     "hono-rate-limiter": "^0.4.2",
     "node-cache": "^5.1.2",
     "node-fetch": "^3.3.2",
-    "playwright": "^1.56.1",
-    "puppeteer-core": "^24.31.0",
     "tough-cookie": "^6.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@vercel/node": "^3.0.0",
     "eslint": "^9.29.0",
     "eslint-config-prettier": "^10.1.5",
     "prettier": "^3.5.3"
