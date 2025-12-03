@@ -3,12 +3,12 @@
 // export dynamically through wrangler, or we can potentially let users directly
 // add them as a sort of "plugin" system.
 
-import ENTRY, { __INTERNAL_WRANGLER_MIDDLEWARE__ } from "/root/toonstream-api/.wrangler/tmp/bundle-5YJNld/middleware-insertion-facade.js";
+import ENTRY, { __INTERNAL_WRANGLER_MIDDLEWARE__ } from "/root/toonstream-api/.wrangler/tmp/bundle-j4oqwj/middleware-insertion-facade.js";
 import { __facade_invoke__, __facade_register__, Dispatcher } from "/root/toonstream-api/node_modules/wrangler/templates/middleware/common.ts";
-import type { WorkerEntrypointConstructor } from "/root/toonstream-api/.wrangler/tmp/bundle-5YJNld/middleware-insertion-facade.js";
+import type { WorkerEntrypointConstructor } from "/root/toonstream-api/.wrangler/tmp/bundle-j4oqwj/middleware-insertion-facade.js";
 
 // Preserve all the exports from the worker
-export * from "/root/toonstream-api/.wrangler/tmp/bundle-5YJNld/middleware-insertion-facade.js";
+export * from "/root/toonstream-api/.wrangler/tmp/bundle-j4oqwj/middleware-insertion-facade.js";
 
 class __Facade_ScheduledController__ implements ScheduledController {
 	readonly #noRetry: ScheduledController["noRetry"];

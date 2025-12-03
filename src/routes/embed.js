@@ -240,7 +240,7 @@ function generateCleanPlayer(iframeSrc) {
                 <iframe 
                     src="${iframeSrc}" 
                     allowfullscreen 
-                    allow="autoplay; encrypted-media; fullscreen; picture-in-picture" 
+                    allow="autoplay; encrypted-media; fullscreen; picture-in-picture; accelerometer; gyroscope; clipboard-write" 
                     onload="document.getElementById('loader').style.opacity='0'; setTimeout(() => document.getElementById('loader').style.display='none', 500);"
                 ></iframe>
             </body>
