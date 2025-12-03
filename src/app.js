@@ -91,7 +91,7 @@ app.get('/api/openapi.json', (c) => {
         info: {
             title: 'ToonStream API',
             version: '1.0.0',
-            description: 'A comprehensive RESTful API for scraping anime content from toonstream.love'
+            description: 'A comprehensive RESTful API for scraping anime content from toonstream.one'
         },
         servers: [
             {

@@ -1,7 +1,7 @@
 {
   "name": "toonstream-api",
   "version": "1.0.0",
-  "description": "A comprehensive RESTful API for scraping anime content from toonstream.love - Optimized for Cloudflare Workers",
+  "description": "A comprehensive RESTful API for scraping anime content from toonstream.one - Optimized for Cloudflare Workers",
   "main": "src/worker.js",
   "type": "module",
   "private": true,

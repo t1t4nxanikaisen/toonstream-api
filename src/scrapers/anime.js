@@ -46,7 +46,7 @@ export const scrapeAnimeDetails = async (id) => {
         const posterEl = $('.poster img, .thumbnail img, article img, [class*="poster"] img').first();
         let poster = posterEl.attr('src') || posterEl.attr('data-src') || posterEl.attr('data-lazy-src') || '';
         if (poster && !poster.startsWith('http')) {
-            poster = poster.startsWith('//') ? `https:${poster}` : `https://toonstream.love${poster}`;
+            poster = poster.startsWith('//') ? `https:${poster}` : `https://toonstream.one${poster}`;
         }
 
         // Extract description/synopsis

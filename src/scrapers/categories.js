@@ -16,27 +16,38 @@ export const scrapeCategory = async (category, page = 1) => {
     }
 
     try {
-        const url = `/category/${category}/page/${page}/`;
+        // Try without /page/ first for page 1, then with /page/ for other pages
+        let url;
+        if (page === 1) {
+            url = `/category/${category}/`;
+        } else {
+            url = `/category/${category}/page/${page}/`;
+        }
+
         const html = await fetchPage(url);
         const $ = parseHTML(html);
 
         const animes = [];
+        const processedIds = new Set();
 
-        $('article, .movie-item, .item, .post').each((_, el) => {
-            const anime = extractAnimeCard($(el), $);
-            if (anime && anime.id) {
+        // Use the same post-lst structure as search
+        $('ul.post-lst li').each((_, el) => {
+            const $li = $(el);
+            const anime = extractAnimeCard($li, $);
+            if (anime && anime.id && !processedIds.has(anime.id)) {
+                processedIds.add(anime.id);
                 animes.push(anime);
             }
         });
 
         const pagination = extractPagination($);
-        const categoryName = $('.page-title, h1').first().text().trim() || category;
+        const categoryName = $('.page-title, h1, .section-title').first().text().trim() || category;
 
         const data = {
             success: true,
             category,
             categoryName,
-            animes,
+            results: animes,  // Changed from 'animes' to 'results' for consistency
             pagination
         };
 
@@ -206,7 +217,7 @@ export const scrapeRandom = async (category) => {
         }
 
         // 4. Pick random anime
-        const animes = pageData.animes;
+        const animes = pageData.results || [];
         if (animes.length === 0) {
             throw new Error('No anime found');
         }

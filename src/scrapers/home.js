@@ -14,7 +14,7 @@ export const scrapeHome = async () => {
     }
 
     try {
-        const html = await fetchPage('/');
+        const html = await fetchPage('/home/');
         const $ = parseHTML(html);
 
         const data = {
@@ -24,36 +24,35 @@ export const scrapeHome = async () => {
             schedule: {}
         };
 
-        // Target specific content sections, avoiding navigation/menu items
-        const contentSelectors = [
-            'article.item',
-            'article.post',
-            '.items article',
-            '.movies-list article',
-            'div.item',
-            '.content article'
-        ];
-
         const processedIds = new Set();
 
-        contentSelectors.forEach(selector => {
-            $(selector).each((_, el) => {
-                const anime = extractAnimeCard($(el), $);
-                if (anime && anime.id && !processedIds.has(anime.id)) {
-                    processedIds.add(anime.id);
+        // Target the post-lst structure like in search
+        $('ul.post-lst li').each((_, el) => {
+            const $li = $(el);
+            const liClass = $li.attr('class') || '';
 
-                    // Categorize based on URL pattern
-                    if (anime.url.includes('/series/')) {
-                        if (data.latestSeries.length < 20) {
-                            data.latestSeries.push(anime);
-                        }
-                    } else if (anime.url.includes('/movies/') || anime.url.includes('/movie/')) {
-                        if (data.latestMovies.length < 20) {
-                            data.latestMovies.push(anime);
-                        }
+            // Skip if already processed
+            const link = $li.find('a.lnk-blk').first();
+            const url = link.attr('href');
+            if (!url) return;
+
+            const id = url.split('/').filter(Boolean).pop();
+            if (!id || processedIds.has(id)) return;
+            processedIds.add(id);
+
+            const anime = extractAnimeCard($li, $);
+            if (anime && anime.id) {
+                // Categorize based on URL pattern or class
+                if (liClass.includes('type-series') || anime.url.includes('/series/')) {
+                    if (data.latestSeries.length < 20) {
+                        data.latestSeries.push(anime);
+                    }
+                } else if (liClass.includes('type-movies') || anime.url.includes('/movies/') || anime.url.includes('/movie/')) {
+                    if (data.latestMovies.length < 20) {
+                        data.latestMovies.push(anime);
                     }
                 }
-            });
+            }
         });
 
         // Extract schedule if available

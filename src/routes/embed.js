@@ -43,7 +43,7 @@ embed.get('/embed/:id', async (c) => {
             return c.html(generateCleanPlayer(cachedSrc));
         }
 
-        const url = `https://toonstream.love/episode/${id}/`;
+        const url = `https://toonstream.one/episode/${id}/`;
         console.log(`[Embed] Fetching ToonStream page for ${id}`);
 
         // Enhanced headers to bypass restrictions
@@ -52,8 +52,8 @@ embed.get('/embed/:id', async (c) => {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Referer': 'https://toonstream.love/',
-            'Origin': 'https://toonstream.love',
+            'Referer': 'https://toonstream.one/',
+            'Origin': 'https://toonstream.one',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
@@ -115,7 +115,7 @@ embed.get('/embed/:id', async (c) => {
         if (iframeSrc) {
             // Fix relative URLs
             if (iframeSrc.startsWith('//')) iframeSrc = `https:${iframeSrc}`;
-            else if (iframeSrc.startsWith('/')) iframeSrc = `https://toonstream.love${iframeSrc}`;
+            else if (iframeSrc.startsWith('/')) iframeSrc = `https://toonstream.one${iframeSrc}`;
 
             // Cache the result
             setCache(cacheKey, iframeSrc, 1800); // 30 minutes
@@ -135,8 +135,8 @@ embed.get('/embed/:id', async (c) => {
         let processedHtml = html
             .replace(/src="\/\//g, 'src="https://')
             .replace(/href="\/\//g, 'href="https://')
-            .replace(/src="\//g, 'src="https://toonstream.love/')
-            .replace(/href="\//g, 'href="https://toonstream.love/');
+            .replace(/src="\//g, 'src="https://toonstream.one/')
+            .replace(/href="\//g, 'href="https://toonstream.one/');
 
         // Insert the enhancements before </head>
         // (We reuse the generateAdBlockScript function to keep code DRY if we separate it, 
