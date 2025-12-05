@@ -334,8 +334,8 @@ export const decodeHTMLEntities = (text) => {
 export const extractPlayerUrl = ($) => {
     // Prioritize data-src, then src, then data-lazy-src
     // Look in common player containers
-    let src = $('iframe[data-src*="player"], iframe[data-src*="embed"], iframe[data-src*="trembed"], .player iframe').attr('data-src')
-        || $('iframe[src*="player"], iframe[src*="embed"], iframe[src*="trembed"], .player iframe').attr('src');
+    let src = $('iframe[data-src*="player"], iframe[data-src*="embed"], iframe[data-src*="trembed"], .player iframe, .Video iframe').attr('data-src')
+        || $('iframe[src*="player"], iframe[src*="embed"], iframe[src*="trembed"], .player iframe, .Video iframe').attr('src');
 
     if (!src) {
         // Fallback search

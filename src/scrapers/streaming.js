@@ -176,7 +176,13 @@ async function scrapeWithFetch(episodeId) {
     // Extract servers/players
     const servers = [];
     $('.server-list button, .player-option, [data-server], [class*="server"]').each((_, el) => {
-        const serverName = $(el).text().trim() || $(el).attr('data-server') || $(el).attr('data-name');
+        let serverName = $(el).text().trim() || $(el).attr('data-server') || $(el).attr('data-name');
+
+        // Clean server name
+        if (serverName) {
+            serverName = serverName.replace(/\s+/g, ' ').replace(/-[^-]*$/, '').trim();
+        }
+
         const serverId = $(el).attr('data-id') || $(el).attr('data-server-id') || serverName;
 
         if (serverName && serverName.length < 50) {
