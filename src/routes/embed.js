@@ -78,8 +78,22 @@ embed.get('/embed/:id', async (c) => {
                                 timeout: 10000
                             });
 
-                            const $player = load(playerResponse.data);
-                            const realIframeSrc = extractPlayerUrl($player);
+                            // Optimization: Use Regex instead of Cheerio to save CPU/Memory
+                            // Pattern to find iframe src or data-src
+                            let realIframeSrc = null;
+                            const dataSrcMatch = playerResponse.data.match(/<iframe[^>]+data-src=["']([^"']+)["']/i);
+                            const srcMatch = playerResponse.data.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+
+                            if (dataSrcMatch) realIframeSrc = dataSrcMatch[1];
+                            else if (srcMatch) realIframeSrc = srcMatch[1];
+
+                            if (realIframeSrc) {
+                                realIframeSrc = decodeHTMLEntities(realIframeSrc);
+                                // Clean up URL
+                                if (realIframeSrc.startsWith('//')) realIframeSrc = `https:${realIframeSrc}`;
+                                else if (realIframeSrc.startsWith('/')) realIframeSrc = `https://toonstream.one${realIframeSrc}`;
+                                else if (realIframeSrc.startsWith('http://')) realIframeSrc = realIframeSrc.replace('http://', 'https://');
+                            }
 
                             if (realIframeSrc) {
                                 // Skip vidstreaming.xyz as it's currently down
