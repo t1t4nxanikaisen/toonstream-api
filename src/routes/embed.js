@@ -4,6 +4,7 @@ import { load } from 'cheerio';
 import { getCache, setCache } from '../utils/cache.js';
 import { extractPlayerUrl, decodeHTMLEntities } from '../utils/scraper.js';
 import { scrapeEpisodeStreaming } from '../scrapers/streaming.js';
+import { scrapeAnimeDetails } from '../scrapers/anime.js';
 
 const embed = new Hono();
 
@@ -36,99 +37,155 @@ embed.get('/api/source/:id', async (c) => {
 embed.get('/embed/:id', async (c) => {
     try {
         const id = c.req.param('id');
-        const cacheKey = `embed:${id}`;
-
-        // ...
+        const type = c.req.query('type') || 'auto'; // Optional type parameter
+        const cacheKey = `embed:${id}:${type}`;
 
         // 1. Try to get from cache first
         const cachedSrc = getCache(cacheKey);
         if (cachedSrc) {
-            console.log(`[Embed] Serving cached player for ${id}`);
+            console.log(`[Embed] Serving cached player for ${id} (type: ${type})`);
             return c.html(generateCleanPlayer(cachedSrc));
         }
 
-        console.log(`[Embed] Fetching ToonStream data for ${id}`);
+        console.log(`[Embed] Fetching ToonStream data for ${id} (type: ${type})`);
 
         let iframeSrc;
         let allSources = [];
-        try {
-            const episodeData = await scrapeEpisodeStreaming(id);
-            console.log(`[Embed] Episode data:`, JSON.stringify({
-                success: episodeData?.success,
-                sourcesCount: episodeData?.sources?.length,
-                sources: episodeData?.sources?.map(s => s.url)
-            }));
-
-            if (episodeData && episodeData.sources && episodeData.sources.length > 0) {
-                allSources = episodeData.sources;
-
-                // Optimization: Parallel fetching with Promise.any
-                // We map all sources to promises and race them to find the first working one
-                const fetchSource = async (source) => {
-                    const sourceUrl = source.url;
-                    // Direct iframe - resolve immediately
-                    if (!sourceUrl.includes('trembed') && !sourceUrl.includes('toonstream.one/home')) {
-                        return sourceUrl;
-                    }
-
-                    // Trembed URL - fetch and extract
-                    try {
-                        console.log(`[Embed] Fetching source: ${sourceUrl}`);
-                        const playerResponse = await axios.get(sourceUrl, {
-                            headers: {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                'Referer': `https://toonstream.one/episode/${id}/`,
-                            },
-                            timeout: 4000 // Reduced timeout to 4s
-                        });
-
-                        // Regex extraction
-                        let realIframeSrc = null;
-                        const dataSrcMatch = playerResponse.data.match(/<iframe[^>]+data-src=["']([^"']+)["']/i);
-                        const srcMatch = playerResponse.data.match(/<iframe[^>]+src=["']([^"']+)["']/i);
-
-                        if (dataSrcMatch) realIframeSrc = dataSrcMatch[1];
-                        else if (srcMatch) realIframeSrc = srcMatch[1];
-
-                        if (realIframeSrc) {
-                            realIframeSrc = decodeHTMLEntities(realIframeSrc);
-                            if (realIframeSrc.startsWith('//')) realIframeSrc = `https:${realIframeSrc}`;
-                            else if (realIframeSrc.startsWith('/')) realIframeSrc = `https://toonstream.one${realIframeSrc}`;
-                            else if (realIframeSrc.startsWith('http://')) realIframeSrc = realIframeSrc.replace('http://', 'https://');
-
-                            // Skip vidstreaming.xyz
-                            if (realIframeSrc.includes('vidstreaming.xyz')) {
-                                throw new Error('Skipping vidstreaming.xyz (disabled)');
-                            }
-
-                            console.log(`[Embed] Successfully extracted: ${realIframeSrc}`);
-                            return realIframeSrc;
-                        }
-                        throw new Error('No iframe found in source');
-                    } catch (err) {
-                        // console.error(`[Embed] Source failed: ${sourceUrl} - ${err.message}`);
-                        throw err; // Propagate error for Promise.any
-                    }
-                };
-
-                // Limit concurrency to 5 to avoid "Too many subrequests"
-                const activeSources = allSources.slice(0, 5);
-
-                try {
-                    iframeSrc = await Promise.any(activeSources.map(s => fetchSource(s)));
-                } catch (aggregateError) {
-                    console.error('[Embed] All sources failed:', aggregateError.errors);
-                    // Fallback: throw the first error or a generic one
-                    throw new Error('No working video source found (all attempts failed)');
-                }
+        
+        // First, try to get content details to determine type
+        let contentType = type;
+        if (type === 'auto') {
+            try {
+                const contentData = await scrapeAnimeDetails(id, 'auto');
+                contentType = contentData.type;
+                console.log(`[Embed] Auto-detected type: ${contentType}`);
+            } catch (error) {
+                console.log(`[Embed] Could not auto-detect type, using episode scraping`);
             }
-        } catch (error) {
-            console.error(`[Embed] Failed to scrape episode data: ${error.message}`);
-            throw error;
         }
 
-        // 2. Extract iframe source
-        // (iframeSrc is now already extracted)
+        // Handle different content types
+        if (contentType === 'movie' || contentType === 'movies') {
+            // For movies, fetch the movie page directly
+            try {
+                const movieUrl = `https://toonstream.one/movies/${id}/`;
+                const response = await axios.get(movieUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Referer': 'https://toonstream.one/',
+                    },
+                    timeout: 5000
+                });
+
+                const $ = load(response.data);
+                
+                // Extract player iframe
+                const playerIframe = $('iframe[src*="player"], iframe[src*="embed"], iframe[data-src*="player"]').first();
+                let src = playerIframe.attr('data-src') || playerIframe.attr('src');
+                
+                if (src) {
+                    src = decodeHTMLEntities(src);
+                    if (src.startsWith('//')) src = `https:${src}`;
+                    else if (src.startsWith('/')) src = `https://toonstream.one${src}`;
+                    else if (src.startsWith('http://')) src = src.replace('http://', 'https://');
+                    
+                    iframeSrc = src;
+                } else {
+                    // Try alternative extraction
+                    const scriptContent = $('script').text();
+                    const srcMatch = scriptContent.match(/src=["']([^"']*player[^"']*)["']/i);
+                    if (srcMatch) {
+                        iframeSrc = srcMatch[1];
+                        if (iframeSrc.startsWith('//')) iframeSrc = `https:${iframeSrc}`;
+                        else if (iframeSrc.startsWith('/')) iframeSrc = `https://toonstream.one${iframeSrc}`;
+                    }
+                }
+                
+                if (!iframeSrc) {
+                    throw new Error('No player found on movie page');
+                }
+            } catch (error) {
+                console.error(`[Embed] Failed to extract movie player: ${error.message}`);
+                // Fall back to episode scraping
+                contentType = 'episode';
+            }
+        }
+
+        // For series, cartoons, or if movie extraction failed, use episode scraping
+        if (!iframeSrc || contentType !== 'movie') {
+            try {
+                const episodeData = await scrapeEpisodeStreaming(id);
+                console.log(`[Embed] Episode data:`, JSON.stringify({
+                    success: episodeData?.success,
+                    sourcesCount: episodeData?.sources?.length,
+                    sources: episodeData?.sources?.map(s => s.url)
+                }));
+
+                if (episodeData && episodeData.sources && episodeData.sources.length > 0) {
+                    allSources = episodeData.sources;
+
+                    // Optimization: Parallel fetching with Promise.any
+                    const fetchSource = async (source) => {
+                        const sourceUrl = source.url;
+                        // Direct iframe - resolve immediately
+                        if (!sourceUrl.includes('trembed') && !sourceUrl.includes('toonstream.one/home')) {
+                            return sourceUrl;
+                        }
+
+                        // Trembed URL - fetch and extract
+                        try {
+                            console.log(`[Embed] Fetching source: ${sourceUrl}`);
+                            const playerResponse = await axios.get(sourceUrl, {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                                    'Referer': `https://toonstream.one/episode/${id}/`,
+                                },
+                                timeout: 4000
+                            });
+
+                            // Regex extraction
+                            let realIframeSrc = null;
+                            const dataSrcMatch = playerResponse.data.match(/<iframe[^>]+data-src=["']([^"']+)["']/i);
+                            const srcMatch = playerResponse.data.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+
+                            if (dataSrcMatch) realIframeSrc = dataSrcMatch[1];
+                            else if (srcMatch) realIframeSrc = srcMatch[1];
+
+                            if (realIframeSrc) {
+                                realIframeSrc = decodeHTMLEntities(realIframeSrc);
+                                if (realIframeSrc.startsWith('//')) realIframeSrc = `https:${realIframeSrc}`;
+                                else if (realIframeSrc.startsWith('/')) realIframeSrc = `https://toonstream.one${realIframeSrc}`;
+                                else if (realIframeSrc.startsWith('http://')) realIframeSrc = realIframeSrc.replace('http://', 'https://');
+
+                                // Skip vidstreaming.xyz
+                                if (realIframeSrc.includes('vidstreaming.xyz')) {
+                                    throw new Error('Skipping vidstreaming.xyz (disabled)');
+                                }
+
+                                console.log(`[Embed] Successfully extracted: ${realIframeSrc}`);
+                                return realIframeSrc;
+                            }
+                            throw new Error('No iframe found in source');
+                        } catch (err) {
+                            throw err;
+                        }
+                    };
+
+                    // Limit concurrency to 5
+                    const activeSources = allSources.slice(0, 5);
+
+                    try {
+                        iframeSrc = await Promise.any(activeSources.map(s => fetchSource(s)));
+                    } catch (aggregateError) {
+                        console.error('[Embed] All sources failed:', aggregateError.errors);
+                        throw new Error('No working video source found (all attempts failed)');
+                    }
+                }
+            } catch (error) {
+                console.error(`[Embed] Failed to scrape episode data: ${error.message}`);
+                throw error;
+            }
+        }
 
         if (iframeSrc) {
             // Cache the result
@@ -141,7 +198,7 @@ embed.get('/embed/:id', async (c) => {
         }
 
         // No working source found
-        throw new Error('No working video source found for this episode');
+        throw new Error('No working video source found for this content');
 
     } catch (error) {
         console.error('Embed error:', error.message);
@@ -222,6 +279,34 @@ embed.get('/embed/:id', async (c) => {
 });
 
 /**
+ * GET /embed/movies/:id
+ * Special endpoint for movie embeds
+ */
+embed.get('/movies/:id', async (c) => {
+    const id = c.req.param('id');
+    // Redirect to main embed endpoint with type parameter
+    return c.redirect(`/embed/${id}?type=movie`);
+});
+
+/**
+ * GET /embed/series/:id
+ * Special endpoint for series embeds
+ */
+embed.get('/series/:id', async (c) => {
+    const id = c.req.param('id');
+    return c.redirect(`/embed/${id}?type=series`);
+});
+
+/**
+ * GET /embed/cartoons/:id
+ * Special endpoint for cartoon embeds
+ */
+embed.get('/cartoons/:id', async (c) => {
+    const id = c.req.param('id');
+    return c.redirect(`/embed/${id}?type=cartoon`);
+});
+
+/**
  * Generate clean player HTML
  */
 function generateCleanPlayer(iframeSrc) {
@@ -264,61 +349,6 @@ function generateCleanPlayer(iframeSrc) {
                 ></iframe>
             </body>
         </html>
-    `;
-}
-
-/**
- * Get CSS for legacy fallback
- */
-function getEmbedStyles() {
-    return `
-        /* === HIDE ALL NON-PLAYER ELEMENTS === */
-        header, footer, nav, .header, .footer, .navigation, .nav,
-        [class*="header"]:not([class*="player"]), [class*="footer"]:not([class*="player"]),
-        [class*="nav"]:not([class*="player"]), .site-header, .site-footer, .site-nav,
-        .menu, .sidebar, .breadcrumb, [class*="menu"], [class*="sidebar"], [class*="breadcrumb"],
-        .related, .recommendations, .similar, [class*="related"], [class*="recommend"], [class*="similar"],
-        .comments, .social, .share, [class*="comment"], [class*="social"], [class*="share"],
-        .content-info, .episode-list, .series-info, [class*="episode-list"], [class*="series"],
-        .entry-header, .entry-footer, .entry-meta, .post-navigation, .widget, .widget-area,
-        /* === AD BLOCKING === */
-        [class*="ad-"], [id*="ad-"], [class*="ads"], [id*="ads"],
-        [class*="banner"], [id*="banner"], [class*="sponsor"], [id*="sponsor"],
-        [class*="popup"], [id*="popup"], [class*="overlay"]:not([class*="player"]),
-        [class*="modal"]:not([class*="player"]),
-        img[width="1"], img[height="1"],
-        iframe[src*="doubleclick"], iframe[src*="googlesyndication"],
-        iframe[src*="advertising"], iframe[src*="adserver"],
-        iframe[src*="ads."], iframe[src*="/ads/"],
-        [src*="doubleclick"], [src*="googlesyndication"], [src*="googleadservices"],
-        [src*="adservice"], [href*="adserver"], [href*="advertising"] {
-            display: none !important; visibility: hidden !important; opacity: 0 !important;
-            pointer-events: none !important; position: absolute !important; left: -9999px !important;
-        }
-        /* === RESET BODY STYLES === */
-        body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: #000 !important; }
-        /* === FULLSCREEN PLAYER === */
-        .player, .player-container, .video-player,
-        [class*="player"]:not([class*="header"]):not([class*="footer"]),
-        [id*="player"], .video-container, [class*="video-container"],
-        iframe[src*="player"]:not([src*="ad"]):not([src*="doubleclick"]),
-        iframe[src*="embed"]:not([src*="ad"]):not([src*="doubleclick"]) {
-            width: 100vw !important; height: 100vh !important;
-            max-width: 100vw !important; max-height: 100vh !important;
-            margin: 0 !important; padding: 0 !important;
-            position: fixed !important; top: 0 !important; left: 0 !important;
-            z-index: 9999 !important; border: none !important;
-        }
-        /* Ensure player iframe is visible */
-        .player iframe:not([src*="ad"]), .player-container iframe:not([src*="ad"]),
-        [class*="player"] iframe:not([src*="ad"]) {
-            display: block !important; visibility: visible !important;
-        }
-        /* Block popunder and popup windows */
-        body::after {
-            content: ''; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            pointer-events: none; z-index: 10000;
-        }
     `;
 }
 
