@@ -1,13 +1,14 @@
-import { fetchPage, parseHTML, extractEpisodeInfo, cleanText } from '../utils/scraper.js';
+import { fetchPage, parseHTML, extractEpisodeInfo, cleanText, extractAnimeId } from '../utils/scraper.js';
 import { getCache, setCache } from '../utils/cache.js';
 
 /**
- * Scrape anime/series details
- * @param {string} id - Anime ID/slug
- * @returns {Promise<object>} Anime details
+ * Scrape anime/series/movie/cartoon details
+ * @param {string} id - Content ID/slug
+ * @param {string} type - Content type (auto-detected if not provided)
+ * @returns {Promise<object>} Content details
  */
-export const scrapeAnimeDetails = async (id) => {
-    const cacheKey = `anime:${id}`;
+export const scrapeAnimeDetails = async (id, type = null) => {
+    const cacheKey = `content:${id}:${type || 'auto'}`;
     const cached = getCache(cacheKey);
 
     if (cached) {
@@ -15,25 +16,57 @@ export const scrapeAnimeDetails = async (id) => {
     }
 
     try {
-        // Try multiple URL patterns to handle both series and movies
         let html;
         let url;
-        let lastError;
+        let detectedType = type;
 
-        // First try as a series
-        try {
-            url = `/series/${id}/`;
-            html = await fetchPage(url);
-        } catch (error) {
-            lastError = error;
-            // If series fails with 404, try as a movie
-            if (error.message.includes('404')) {
+        // If type is provided, use it directly
+        if (type) {
+            if (type === 'series') {
+                url = `/series/${id}/`;
+            } else if (type === 'movie') {
                 url = `/movies/${id}/`;
-                html = await fetchPage(url);
-                lastError = null; // Success!
+            } else if (type === 'cartoon') {
+                url = `/cartoons/${id}/`;
             } else {
-                // If it's not a 404, throw the original error
-                throw error;
+                url = `/series/${id}/`; // Default to series
+            }
+            
+            try {
+                html = await fetchPage(url);
+            } catch (error) {
+                // If specified type fails, try auto-detection
+                if (error.message.includes('404')) {
+                    console.log(`Type ${type} not found for ${id}, trying auto-detection`);
+                    detectedType = null; // Reset for auto-detection
+                } else {
+                    throw error;
+                }
+            }
+        }
+
+        // Auto-detect type if not specified or if specified type failed
+        if (!detectedType || !html) {
+            const types = ['series', 'movies', 'cartoons'];
+            let lastError;
+            
+            for (const tryType of types) {
+                try {
+                    url = `/${tryType}/${id}/`;
+                    html = await fetchPage(url);
+                    detectedType = tryType === 'movies' ? 'movie' : tryType;
+                    lastError = null;
+                    break;
+                } catch (error) {
+                    lastError = error;
+                    if (!error.message.includes('404')) {
+                        throw error; // Throw non-404 errors immediately
+                    }
+                }
+            }
+            
+            if (!html && lastError) {
+                throw new Error(`Content not found: ${id} (tried: series, movies, cartoons)`);
             }
         }
 
@@ -109,64 +142,66 @@ export const scrapeAnimeDetails = async (id) => {
             }
         });
 
-        // Extract episodes by season
+        // Extract episodes/seasons (only for series and cartoons)
         const seasons = {};
         let allEpisodes = [];
+        let totalEpisodes = 0;
 
-        // Look for season containers
-        $('[class*="season"], .episodes-list, [id*="season"]').each((_, seasonEl) => {
-            const seasonText = $(seasonEl).find('[class*="season-title"], h2, h3').first().text();
-            const seasonMatch = seasonText.match(/season\s*(\d+)/i);
-            const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+        if (detectedType === 'series' || detectedType === 'cartoon') {
+            // Look for season containers
+            $('[class*="season"], .episodes-list, [id*="season"]').each((_, seasonEl) => {
+                const seasonText = $(seasonEl).find('[class*="season-title"], h2, h3').first().text();
+                const seasonMatch = seasonText.match(/season\s*(\d+)/i);
+                const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
 
-            const episodes = [];
-            $(seasonEl).find('a[href*="/episode/"]').each((_, el) => {
-                // Pass the container element (li or div) if the link is inside it
-                const container = $(el).closest('li, .episode-item');
-                const elementToParse = container.length ? container : $(el).parent();
+                const episodes = [];
+                $(seasonEl).find('a[href*="/episode/"]').each((_, el) => {
+                    const container = $(el).closest('li, .episode-item');
+                    const elementToParse = container.length ? container : $(el).parent();
 
-                const episode = extractEpisodeInfo(elementToParse, $);
-                if (episode && episode.id) {
-                    // Force season number if we found it in the container
-                    if (!episode.season || episode.season === 1) {
+                    const episode = extractEpisodeInfo(elementToParse, $);
+                    if (episode && episode.id) {
                         episode.season = seasonNum;
+                        episodes.push(episode);
+                        allEpisodes.push(episode);
                     }
-                    episodes.push(episode);
-                    allEpisodes.push(episode);
+                });
+
+                if (episodes.length > 0) {
+                    seasons[seasonNum] = episodes;
                 }
             });
 
-            if (episodes.length > 0) {
-                seasons[seasonNum] = episodes;
+            // If no seasons found, try to get all episode links
+            if (Object.keys(seasons).length === 0) {
+                $('a[href*="/episode/"]').each((_, el) => {
+                    const container = $(el).closest('li, .episode-item');
+                    const elementToParse = container.length ? container : $(el).parent();
+
+                    const episode = extractEpisodeInfo(elementToParse, $);
+                    if (episode && episode.id) {
+                        allEpisodes.push(episode);
+                    }
+                });
+
+                // Group by season number
+                allEpisodes.forEach(ep => {
+                    const seasonNum = ep.season || 1;
+                    if (!seasons[seasonNum]) {
+                        seasons[seasonNum] = [];
+                    }
+                    seasons[seasonNum].push(ep);
+                });
             }
-        });
 
-        // If no seasons found via containers, try to get all episode links and group them
-        if (Object.keys(seasons).length === 0) {
-            $('a[href*="/episode/"]').each((_, el) => {
-                const container = $(el).closest('li, .episode-item');
-                const elementToParse = container.length ? container : $(el).parent();
-
-                const episode = extractEpisodeInfo(elementToParse, $);
-                if (episode && episode.id) {
-                    allEpisodes.push(episode);
-                }
-            });
-
-            // Group by season number
-            allEpisodes.forEach(ep => {
-                const seasonNum = ep.season || 1;
-                if (!seasons[seasonNum]) {
-                    seasons[seasonNum] = [];
-                }
-                seasons[seasonNum].push(ep);
-            });
+            totalEpisodes = allEpisodes.length;
         }
 
         const data = {
             success: true,
             id,
             title,
+            type: detectedType,
             poster,
             description,
             rating,
@@ -175,22 +210,46 @@ export const scrapeAnimeDetails = async (id) => {
             genres,
             languages,
             cast,
-            totalEpisodes: allEpisodes.length,
+            totalEpisodes,
             seasons,
-            related
+            related,
+            url: `https://toonstream.one/${detectedType === 'movie' ? 'movies' : detectedType === 'cartoon' ? 'cartoons' : 'series'}/${id}/`
         };
 
         setCache(cacheKey, data, 3600); // Cache for 1 hour
         return data;
     } catch (error) {
-        console.error('Error scraping anime details:', error.message);
-        throw new Error(`Failed to scrape anime details: ${error.message}`);
+        console.error('Error scraping content details:', error.message);
+        throw new Error(`Failed to scrape content details: ${error.message}`);
     }
 };
 
 /**
- * Check availability for multiple anime
- * @param {string[]} ids - Array of anime IDs
+ * Helper function to extract anime card (needed for related content)
+ */
+function extractAnimeCard($element, $) {
+    const link = $element.find('a').first();
+    const url = link.attr('href');
+    if (!url) return null;
+    
+    const idData = extractAnimeId(url);
+    if (!idData) return null;
+    
+    const title = link.text().trim() || link.attr('title') || '';
+    const img = $element.find('img').first();
+    const poster = img.attr('src') || img.attr('data-src') || null;
+    
+    return {
+        id: idData.id,
+        title: title.replace(/^Image\s+/i, '').trim(),
+        type: idData.type,
+        poster: poster ? (poster.startsWith('http') ? poster : `https://toonstream.one${poster}`) : null
+    };
+}
+
+/**
+ * Check availability for multiple content items
+ * @param {string[]} ids - Array of content IDs
  * @returns {Promise<object>} Availability data
  */
 export const checkBatchAvailability = async (ids) => {
@@ -201,7 +260,8 @@ export const checkBatchAvailability = async (ids) => {
                 return {
                     id,
                     available: true,
-                    totalEpisodes: data.totalEpisodes,
+                    type: data.type,
+                    totalEpisodes: data.totalEpisodes || 0,
                     hasHindi: data.languages.includes('Hindi')
                 };
             } catch (error) {
