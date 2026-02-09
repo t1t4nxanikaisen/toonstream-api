@@ -98,14 +98,40 @@ export const normalizeUrl = (url) => {
 /**
  * Extract anime ID from URL
  * @param {string} url - Anime URL
- * @returns {string|null} Anime ID
+ * @returns {object} Anime ID and type
  */
 export const extractAnimeId = (url) => {
     if (!url) return null;
 
-    // Extract from URLs like /series/anime-name/ or /movies/movie-name/
-    const match = url.match(/\/(series|movies?)\/([^\/]+)/);
-    return match ? match[2] : null;
+    // Extract from URLs like /series/anime-name/ or /movies/movie-name/ or /cartoons/cartoon-name/
+    const seriesMatch = url.match(/\/series\/([^\/]+)/);
+    const movieMatch = url.match(/\/movies?\/([^\/]+)/);
+    const cartoonMatch = url.match(/\/cartoons?\/([^\/]+)/);
+    const episodeMatch = url.match(/\/episode\/([^\/]+)/);
+
+    if (seriesMatch) {
+        return {
+            id: seriesMatch[1],
+            type: 'series'
+        };
+    } else if (movieMatch) {
+        return {
+            id: movieMatch[1],
+            type: 'movie'
+        };
+    } else if (cartoonMatch) {
+        return {
+            id: cartoonMatch[1],
+            type: 'cartoon'
+        };
+    } else if (episodeMatch) {
+        return {
+            id: episodeMatch[1],
+            type: 'episode'
+        };
+    }
+    
+    return null;
 };
 
 /**
@@ -117,7 +143,7 @@ export const extractAnimeId = (url) => {
 export const extractAnimeCard = ($element, $) => {
     try {
         // Find the main link
-        const link = $element.find('a[href*="/series/"], a[href*="/movies/"], a[href*="/movie/"]').first();
+        const link = $element.find('a[href*="/series/"], a[href*="/movies/"], a[href*="/movie/"], a[href*="/cartoons/"], a[href*="/cartoon/"]').first();
         if (!link.length) return null;
 
         let url = link.attr('href');
@@ -132,8 +158,8 @@ export const extractAnimeCard = ($element, $) => {
         }
 
         url = normalizeUrl(url);
-        const id = extractAnimeId(url);
-        if (!id) return null;
+        const idData = extractAnimeId(url);
+        if (!idData) return null;
 
         // Extract poster image - try multiple selectors
         let poster = null;
@@ -177,10 +203,11 @@ export const extractAnimeCard = ($element, $) => {
         if (!title) return null;
 
         return {
-            id,
+            id: idData.id,
             title,
             url,
-            poster
+            poster,
+            type: idData.type
         };
     } catch (error) {
         console.error('Error extracting anime card:', error);
@@ -201,17 +228,26 @@ export const extractEpisodeInfo = ($element, $) => {
         const title = link.text().trim() || link.attr('title') || '';
 
         // Extract ID from URL: /episode/anime-id-episode-num/
-        // Example: /episode/naruto-1x1/ -> naruto-1x1
+        // Example: /episode/doraemon-1x1/ -> doraemon-1x1
         let id = null;
+        let type = 'episode';
         if (url) {
             const match = url.match(/\/episode\/([^\/]+)/);
             if (match) {
                 id = match[1];
+                // Determine if it's a cartoon episode
+                const titleLower = title.toLowerCase();
+                const idLower = id.toLowerCase();
+                if (titleLower.includes('doraemon') || idLower.includes('doraemon') ||
+                    titleLower.includes('pokemon') || idLower.includes('pokemon') ||
+                    titleLower.includes('cartoon') || idLower.includes('cartoon') ||
+                    titleLower.includes('ben 10') || idLower.includes('ben-10')) {
+                    type = 'cartoon';
+                }
             }
         }
 
         // Parse season and episode number from ID or title
-        // ID format: anime-slug-SxEp or anime-slug-episode-num
         let season = 1;
         let number = 0;
 
@@ -235,7 +271,8 @@ export const extractEpisodeInfo = ($element, $) => {
             title,
             url,
             season,
-            number
+            number,
+            type
         };
     } catch (error) {
         console.error('Error extracting episode info:', error);
